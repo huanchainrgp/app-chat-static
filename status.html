@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chat App</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .chat-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 800px;
+            height: 80vh;
+            max-height: 700px;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .chat-header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .chat-header h1 {
+            font-size: 1.5rem;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            background: #28a745;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        #username-display {
+            font-weight: 600;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            animation: slideIn 0.3s ease;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .message-content {
+            display: inline-block;
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 15px;
+            word-wrap: break-word;
+        }
+
+        .message.own {
+            text-align: right;
+        }
+
+        .message.own .message-content {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 5px;
+        }
+
+        .message.other {
+            text-align: left;
+        }
+
+        .message.other .message-content {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 5px;
+            box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+        }
+
+        .message-info {
+            font-size: 0.75rem;
+            color: #666;
+            margin-bottom: 4px;
+        }
+
+        .message.own .message-info {
+            text-align: right;
+        }
+
+        .system-message {
+            text-align: center;
+            color: #666;
+            font-style: italic;
+            font-size: 0.9rem;
+            margin: 10px 0;
+        }
+
+        .typing-indicator {
+            padding: 10px 15px;
+            font-style: italic;
+            color: #999;
+            font-size: 0.9rem;
+        }
+
+        .chat-input-container {
+            border-top: 1px solid #e0e0e0;
+            padding: 20px;
+            background: white;
+        }
+
+        .typing-wrapper {
+            min-height: 20px;
+            padding: 0 20px;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        #message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 25px;
+            font-size: 1rem;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        #message-input:focus {
+            border-color: #667eea;
+        }
+
+        #send-button {
+            padding: 12px 30px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 25px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        #send-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(102, 126, 234, 0.4);
+        }
+
+        #send-button:active {
+            transform: translateY(0);
+        }
+
+        .username-input-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .username-modal {
+            background: white;
+            padding: 40px;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            text-align: center;
+            max-width: 400px;
+            width: 90%;
+        }
+
+        .username-modal h2 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .username-modal input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1rem;
+            margin-bottom: 20px;
+            outline: none;
+        }
+
+        .username-modal input:focus {
+            border-color: #667eea;
+        }
+
+        .username-modal button {
+            width: 100%;
+            padding: 12px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .user-count {
+            font-size: 0.9rem;
+            opacity: 0.9;
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="username-input-container" id="username-modal">
+        <div class="username-modal">
+            <h2>Nhập tên của bạn</h2>
+            <input type="text" id="username-input" placeholder="Tên của bạn..." maxlength="20">
+            <button onclick="joinChat()">Vào Chat</button>
+        </div>
+    </div>
+
+    <div class="chat-container" style="display: none;" id="chat-container">
+        <div class="chat-header">
+            <h1>
+                💬 Chat App
+                <span class="status-indicator" id="connection-indicator"></span>
+            </h1>
+            <div class="user-info">
+                <span id="username-display"></span>
+                <span class="user-count">(<span id="user-count">0</span> người online)</span>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="messages-container"></div>
+
+        <div class="typing-wrapper" id="typing-wrapper"></div>
+
+        <div class="chat-input-container">
+            <div class="input-group">
+                <input 
+                    type="text" 
+                    id="message-input" 
+                    placeholder="Nhập tin nhắn..."
+                    maxlength="500"
+                >
+                <button id="send-button" onclick="sendMessage()">Gửi</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script>
+        let socket;
+        let username = '';
+        let userCount = 0;
+        let typingTimer;
+        let isTyping = false;
+
+        function joinChat() {
+            username = document.getElementById('username-input').value.trim();
+            if (!username) {
+                alert('Vui lòng nhập tên của bạn!');
+                return;
+            }
+
+            // connect to socket.io
+            socket = io();
+            
+            document.getElementById('username-modal').style.display = 'none';
+            document.getElementById('chat-container').style.display = 'flex';
+            document.getElementById('username-display').textContent = username;
+
+            setupSocketEvents();
+            socket.emit('join', username);
+        }
+
+        function setupSocketEvents() {
+            socket.on('connect', () => {
+                document.getElementById('connection-indicator').style.background = '#28a745';
+                addSystemMessage('Đã kết nối với server');
+            });
+
+            socket.on('disconnect', () => {
+                document.getElementById('connection-indicator').style.background = '#dc3545';
+                addSystemMessage('Mất kết nối với server');
+            });
+
+            socket.on('message', (data) => {
+                displayMessage(data);
+            });
+
+            socket.on('typing', (data) => {
+                showTypingIndicator(data);
+            });
+
+            socket.on('user-joined', (data) => {
+                userCount++;
+                updateUserCount();
+                addSystemMessage(`${data.username || 'Ai đó'} đã tham gia chat`);
+            });
+
+            socket.on('user-left', (data) => {
+                userCount = Math.max(0, userCount - 1);
+                updateUserCount();
+                addSystemMessage(`${data.username || 'Ai đó'} đã rời chat`);
+            });
+        }
+
+        function sendMessage() {
+            const input = document.getElementById('message-input');
+            const message = input.value.trim();
+            
+            if (!message || !socket) return;
+
+            socket.emit('message', {
+                username: username,
+                text: message,
+                price: 129999
+            });
+
+            displayMessage({
+                username: username,
+                text: message,
+                id: socket.id
+            }, true);
+
+            input.value = '';
+            stopTyping();
+        }
+
+        function displayMessage(data, isOwn = false) {
+            const container = document.getElementById('messages-container');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn || socket.id === data.id ? 'own' : 'other'}`;
+
+            const time = new Date().toLocaleTimeString('vi-VN', { 
+                hour: '2-digit', 
+                minute: '2-digit' 
+            });
+
+            messageDiv.innerHTML = `
+                <div class="message-info">${data.username} • ${time}</div>
+                <div class="message-content">${escapeHtml(data.text)}</div>
+            `;
+
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addSystemMessage(text) {
+            const container = document.getElementById('messages-container');
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'system-message';
+            messageDiv.textContent = text;
+            container.appendChild(messageDiv);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function showTypingIndicator(data) {
+            if (data.isTyping) {
+                const wrapper = document.getElementById('typing-wrapper');
+                wrapper.innerHTML = `<div class="typing-indicator">${data.username} đang nhập...</div>`;
+                
+                clearTimeout(typingTimer);
+                typingTimer = setTimeout(() => {
+                    wrapper.innerHTML = '';
+                }, 3000);
+            } else {
+                document.getElementById('typing-wrapper').innerHTML = '';
+            }
+        }
+
+        function handleTyping() {
+            const input = document.getElementById('message-input');
+            
+            input.addEventListener('input', () => {
+                if (!isTyping) {
+                    isTyping = true;
+                    socket.emit('typing', { username: username, isTyping: true });
+                }
+
+                clearTimeout(typingTimer);
+                typingTimer = setTimeout(() => {
+                    stopTyping();
+                }, 1000);
+            });
+        }
+
+        function stopTyping() {
+            if (isTyping) {
+                isTyping = false;
+                socket.emit('typing', { username: username, isTyping: false });
+            }
+        }
+
+        function updateUserCount() {
+            document.getElementById('user-count').textContent = userCount;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Allow Enter key to send message
+        document.addEventListener('DOMContentLoaded', () => {
+            const input = document.getElementById('username-input');
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    joinChat();
+                }
+            });
+
+            const messageInput = document.getElementById('message-input');
+            messageInput.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    sendMessage();
+                }
+            });
+
+            // Setup typing indicator
+            messageInput.addEventListener('input', handleTyping);
+        });
+    </script>
+</body>
+</html>
