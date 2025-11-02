@@ -477,6 +477,11 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		"id":   clientID,
 	})
 
+	log.Printf("######################### handleWebSocket")
+	log.Printf("######################### Client connected: %s", clientID)
+	log.Printf("######################### handleWebSocket")
+	log.Printf("######################### handleWebSocket")
+
 	// Start separate goroutines for reading and writing
 	// These run concurrently and handle bidirectional communication
 	go client.WritePump() // Handles outgoing messages from hub
