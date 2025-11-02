@@ -334,6 +334,10 @@
             // Connect to WebSocket
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
             const wsUrl = `${protocol}//${window.location.host}/ws`;
+
+            console.log("########################");
+            console.log(wsUrl);
+            console.log("########################");
             socket = new WebSocket(wsUrl);
             
             document.getElementById('username-modal').style.display = 'none';
