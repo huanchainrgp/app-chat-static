@@ -178,10 +178,11 @@ PORT=8080 go run main.go
 
 ## status.html - Chat Application Client
 
-The `status.html` file is the main chat application client interface. It's a single-page HTML application that provides a modern, real-time chat experience using native WebSocket connections.
+The `status.html` file is the main chat application client interface. It's a simple, easy-to-understand single-page HTML application that provides a real-time chat experience using native WebSocket connections.
 
 ### Features
 
+- **Simple & Easy to Read Code**: Clean, well-commented code in Vietnamese for easy understanding
 - **Username Entry Modal**: Users must enter a username before joining the chat (max 20 characters)
 - **Real-time Messaging**: Instant message delivery via WebSocket
 - **User Count Display**: Displays the number of online users
@@ -190,6 +191,22 @@ The `status.html` file is the main chat application client interface. It's a sin
 - **System Notifications**: Automatic notifications for user joins/leaves
 - **Modern UI**: Beautiful gradient design with smooth animations
 - **Responsive Design**: Works on desktop and mobile devices
+
+### Code Structure
+
+The code is organized simply and clearly:
+
+1. **Variables**: Basic variables for socket, username, user count, and client ID
+2. **DOM Elements**: References to HTML elements
+3. **Helper Functions**: 
+   - `addSystemMessage()` - Shows system notifications
+   - `showMessage()` - Displays chat messages with HTML escaping for security
+4. **Main Functions**:
+   - `joinChat()` - Handles joining chat, creates WebSocket connection, and sets up all event handlers
+   - `sendMessage()` - Sends chat messages to server
+5. **Event Listeners**: Simple Enter key handlers for username and message inputs
+
+All code is commented in Vietnamese for easy understanding.
 
 ### User Interface Components
 
