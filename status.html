@@ -316,13 +316,13 @@
         </div>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
     <script>
         let socket;
         let username = '';
         let userCount = 0;
         let typingTimer;
         let isTyping = false;
+        let clientId = '';
 
         function joinChat() {
             username = document.getElementById('username-input').value.trim();
@@ -331,65 +331,95 @@
                 return;
             }
 
-            // connect to socket.io
-            socket = io();
+            // Connect to WebSocket
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            socket = new WebSocket(wsUrl);
             
             document.getElementById('username-modal').style.display = 'none';
             document.getElementById('chat-container').style.display = 'flex';
             document.getElementById('username-display').textContent = username;
 
             setupSocketEvents();
-            socket.emit('join', username);
         }
 
         function setupSocketEvents() {
-            socket.on('connect', () => {
+            socket.onopen = () => {
                 document.getElementById('connection-indicator').style.background = '#28a745';
                 addSystemMessage('Đã kết nối với server');
-            });
+                
+                // Send join message after connection is established
+                if (clientId) {
+                    socket.send(JSON.stringify({
+                        type: 'join',
+                        username: username
+                    }));
+                }
+            };
 
-            socket.on('disconnect', () => {
+            socket.onclose = () => {
                 document.getElementById('connection-indicator').style.background = '#dc3545';
                 addSystemMessage('Mất kết nối với server');
-            });
+            };
 
-            socket.on('message', (data) => {
-                displayMessage(data);
-            });
+            socket.onerror = (error) => {
+                console.error('WebSocket error:', error);
+                document.getElementById('connection-indicator').style.background = '#dc3545';
+            };
 
-            socket.on('typing', (data) => {
-                showTypingIndicator(data);
-            });
-
-            socket.on('user-joined', (data) => {
-                userCount++;
-                updateUserCount();
-                addSystemMessage(`${data.username || 'Ai đó'} đã tham gia chat`);
-            });
-
-            socket.on('user-left', (data) => {
-                userCount = Math.max(0, userCount - 1);
-                updateUserCount();
-                addSystemMessage(`${data.username || 'Ai đó'} đã rời chat`);
-            });
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    switch(data.type) {
+                        case 'connect':
+                            clientId = data.id;
+                            // Send join message now that we have the client ID
+                            socket.send(JSON.stringify({
+                                type: 'join',
+                                username: username
+                            }));
+                            break;
+                        case 'message':
+                            displayMessage(data);
+                            break;
+                        case 'typing':
+                            showTypingIndicator(data);
+                            break;
+                        case 'user-joined':
+                            userCount++;
+                            updateUserCount();
+                            addSystemMessage(`${data.username || 'Ai đó'} đã tham gia chat`);
+                            break;
+                        case 'user-left':
+                            userCount = Math.max(0, userCount - 1);
+                            updateUserCount();
+                            addSystemMessage(`${data.username || 'Ai đó'} đã rời chat`);
+                            break;
+                    }
+                } catch (e) {
+                    console.error('Error parsing message:', e);
+                }
+            };
         }
 
         function sendMessage() {
             const input = document.getElementById('message-input');
             const message = input.value.trim();
             
-            if (!message || !socket) return;
+            if (!message || !socket || socket.readyState !== WebSocket.OPEN) return;
 
-            socket.emit('message', {
+            socket.send(JSON.stringify({
+                type: 'message',
                 username: username,
                 text: message,
                 price: 129999
-            });
+            }));
 
             displayMessage({
                 username: username,
                 text: message,
-                id: socket.id
+                id: clientId
             }, true);
 
             input.value = '';
@@ -399,7 +429,7 @@
         function displayMessage(data, isOwn = false) {
             const container = document.getElementById('messages-container');
             const messageDiv = document.createElement('div');
-            messageDiv.className = `message ${isOwn || socket.id === data.id ? 'own' : 'other'}`;
+            messageDiv.className = `message ${isOwn || clientId === data.id ? 'own' : 'other'}`;
 
             const time = new Date().toLocaleTimeString('vi-VN', { 
                 hour: '2-digit', 
@@ -442,9 +472,13 @@
             const input = document.getElementById('message-input');
             
             input.addEventListener('input', () => {
-                if (!isTyping) {
+                if (!isTyping && socket && socket.readyState === WebSocket.OPEN) {
                     isTyping = true;
-                    socket.emit('typing', { username: username, isTyping: true });
+                    socket.send(JSON.stringify({
+                        type: 'typing',
+                        username: username,
+                        isTyping: true
+                    }));
                 }
 
                 clearTimeout(typingTimer);
@@ -455,9 +489,13 @@
         }
 
         function stopTyping() {
-            if (isTyping) {
+            if (isTyping && socket && socket.readyState === WebSocket.OPEN) {
                 isTyping = false;
-                socket.emit('typing', { username: username, isTyping: false });
+                socket.send(JSON.stringify({
+                    type: 'typing',
+                    username: username,
+                    isTyping: false
+                }));
             }
         }
 

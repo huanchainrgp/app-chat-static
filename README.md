@@ -1,10 +1,10 @@
 # Chat Server with Socket.IO
 
-A simple Express server with Socket.IO for real-time chat functionality.
+A Go server with Socket.IO for real-time chat functionality.
 
 ## Features
 
-- Express web server
+- Go web server (using Gin framework)
 - Socket.IO WebSocket support
 - Beautiful status page with real-time connection monitoring
 - Support for multiple clients
@@ -13,25 +13,50 @@ A simple Express server with Socket.IO for real-time chat functionality.
 
 ## Installation
 
+### Using Go
+
 ```bash
-yarn install
+make install
+# or
+go mod download
 ```
 
 ## Usage
 
 ### Start the server
 
-```bash
-yarn start
-```
-
-Or for development with auto-reload:
+**Using Makefile (recommended):**
 
 ```bash
-yarn dev
+make start          # Build and start the server
+make run            # Same as make start
+make dev            # Run in development mode (auto-reload if air is installed)
 ```
 
-The server will start on `http://localhost:3000`
+**Or manually:**
+
+```bash
+go run main.go
+```
+
+**Or build and run:**
+
+```bash
+make build          # Build the binary
+./server            # Run the binary
+```
+
+The server will start on `http://localhost:3000` (or the port specified by the `PORT` environment variable)
+
+### Makefile Commands
+
+- `make help` - Show all available commands
+- `make install` - Install Go dependencies
+- `make build` - Build the server binary
+- `make start` or `make run` - Build and start the server
+- `make dev` - Run in development mode (with auto-reload)
+- `make clean` - Clean build artifacts
+- `make test` - Run tests
 
 ### Access the Status Page
 
@@ -94,17 +119,22 @@ http://localhost:3000
 The default port is `3000`. You can change it by setting the `PORT` environment variable:
 
 ```bash
-PORT=8080 yarn start
+PORT=8080 make start
+# or
+PORT=8080 go run main.go
 ```
 
 ## Project Structure
 
 ```
 app-chat-static/
-├── server.js          # Express + Socket.IO server
+├── main.go            # Go server with Socket.IO
+├── go.mod             # Go dependencies
+├── Makefile           # Build and run commands
 ├── status.html        # Status page with connection monitoring
-├── package.json       # Dependencies and scripts
-├── .gitignore        # Git ignore rules
+├── admin.html         # Admin monitoring dashboard
+├── server.js          # Original Node.js server (legacy)
+├── package.json       # Node.js dependencies (legacy)
 └── README.md         # This file
 ```
 
