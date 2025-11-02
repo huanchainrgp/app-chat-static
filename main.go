@@ -156,23 +156,6 @@ func (c *Client) ReadPump() {
 				response["price"] = price
 			}
 			c.broadcastToAll(response)
-
-		case "typing":
-			username := c.Username
-			if u, ok := msg["username"].(string); ok {
-				username = u
-			}
-			monitoringData.AddTypingEvent(c.ID, username)
-
-			// Broadcast to all except sender
-			response := map[string]interface{}{
-				"type":     "typing",
-				"username": username,
-			}
-			if isTyping, ok := msg["isTyping"]; ok {
-				response["isTyping"] = isTyping
-			}
-			c.broadcastToOthers(response)
 		}
 	}
 }
@@ -405,26 +388,6 @@ func (m *MonitoringData) UpdateUsername(id, username string) {
 		Username:  username,
 		Timestamp: time.Now(),
 		Message:   fmt.Sprintf("%s joined the chat", username),
-	})
-	m.TotalEvents++
-
-	// Keep only last 500 events
-	if len(m.Events) > 500 {
-		m.Events = m.Events[len(m.Events)-500:]
-	}
-}
-
-// AddTypingEvent adds a typing event
-func (m *MonitoringData) AddTypingEvent(id, username string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.Events = append(m.Events, Event{
-		Type:      "typing",
-		SocketID:  id,
-		Username:  username,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("%s is typing", username),
 	})
 	m.TotalEvents++
 
