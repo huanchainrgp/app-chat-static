@@ -51,6 +51,9 @@
         </div>
     </div>
 
+    <!-- Container cho hiệu ứng particles -->
+    <div class="particles-container" id="particles-container"></div>
+
     <script>
         // ===== BIẾN LƯU THÔNG TIN =====
         let socket = null;          // Kết nối WebSocket
@@ -67,6 +70,8 @@
         const userCountElement = document.getElementById('user-count');
         const messagesContainer = document.getElementById('messages-container');
         const messageInput = document.getElementById('message-input');
+        const sendButton = document.getElementById('send-button');
+        const particlesContainer = document.getElementById('particles-container');
 
         // ===== HÀM HIỂN THỊ TIN NHẮN HỆ THỐNG =====
         function addSystemMessage(text) {
@@ -202,6 +207,71 @@
             };
         }
 
+        // ===== TẠO HIỆU ỨNG PARTICLES (TUNG TOÉ) =====
+        function createParticleEffect(x, y) {
+            // Màu sắc ngẫu nhiên cho particles
+            const colors = ['#667eea', '#764ba2', '#f093fb', '#4facfe', '#43e97b', '#fa709a'];
+            const particleCount = 30; // Số lượng particles
+
+            for (let i = 0; i < particleCount; i++) {
+                const particle = document.createElement('div');
+                particle.className = 'particle';
+                
+                // Chọn màu ngẫu nhiên
+                const color = colors[Math.floor(Math.random() * colors.length)];
+                particle.style.background = color;
+                particle.style.left = x + 'px';
+                particle.style.top = y + 'px';
+
+                // Tính toán hướng bay ngẫu nhiên
+                const angle = (Math.PI * 2 * i) / particleCount + Math.random() * 0.5;
+                const velocity = 150 + Math.random() * 100;
+                const tx = Math.cos(angle) * velocity;
+                const ty = Math.sin(angle) * velocity;
+
+                particle.style.setProperty('--tx', tx + 'px');
+                particle.style.setProperty('--ty', ty + 'px');
+
+                particlesContainer.appendChild(particle);
+
+                // Xóa particle sau khi animation kết thúc
+                setTimeout(() => {
+                    particle.remove();
+                }, 1000);
+            }
+        }
+
+        // ===== PHÁT ÂM THANH KHI GỬI TIN NHẮN =====
+        function playSendSound() {
+            try {
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                
+                // Tạo oscillator cho âm thanh
+                const oscillator = audioContext.createOscillator();
+                const gainNode = audioContext.createGain();
+
+                // Kết nối nodes
+                oscillator.connect(gainNode);
+                gainNode.connect(audioContext.destination);
+
+                // Cài đặt âm thanh (tone cao ngắn)
+                oscillator.type = 'sine';
+                oscillator.frequency.setValueAtTime(800, audioContext.currentTime); // Tần số cao
+                oscillator.frequency.exponentialRampToValueAtTime(1000, audioContext.currentTime + 0.1);
+
+                // Điều chỉnh volume
+                gainNode.gain.setValueAtTime(0.3, audioContext.currentTime);
+                gainNode.gain.exponentialRampToValueAtTime(0.01, audioContext.currentTime + 0.15);
+
+                // Phát âm thanh
+                oscillator.start(audioContext.currentTime);
+                oscillator.stop(audioContext.currentTime + 0.15);
+            } catch (error) {
+                // Nếu không hỗ trợ Web Audio API, bỏ qua
+                console.log('Web Audio API not supported');
+            }
+        }
+
         // ===== GỬI TIN NHẮN =====
         function sendMessage() {
             // Lấy nội dung tin nhắn
@@ -217,6 +287,23 @@
                 addSystemMessage('Không thể gửi tin nhắn. Vui lòng kiểm tra kết nối.');
                 return;
             }
+
+            // Lấy vị trí nút Gửi để tạo hiệu ứng
+            const buttonRect = sendButton.getBoundingClientRect();
+            const buttonX = buttonRect.left + buttonRect.width / 2;
+            const buttonY = buttonRect.top + buttonRect.height / 2;
+
+            // Tạo hiệu ứng particles
+            createParticleEffect(buttonX, buttonY);
+
+            // Phát âm thanh
+            playSendSound();
+
+            // Hiệu ứng nút bấm
+            sendButton.classList.add('sending');
+            setTimeout(() => {
+                sendButton.classList.remove('sending');
+            }, 300);
 
             // Gửi tin nhắn
             socket.send(JSON.stringify({
