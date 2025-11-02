@@ -143,22 +143,10 @@
             margin: 10px 0;
         }
 
-        .typing-indicator {
-            padding: 10px 15px;
-            font-style: italic;
-            color: #999;
-            font-size: 0.9rem;
-        }
-
         .chat-input-container {
             border-top: 1px solid #e0e0e0;
             padding: 20px;
             background: white;
-        }
-
-        .typing-wrapper {
-            min-height: 20px;
-            padding: 0 20px;
         }
 
         .input-group {
@@ -301,8 +289,6 @@
 
         <div class="chat-messages" id="messages-container"></div>
 
-        <div class="typing-wrapper" id="typing-wrapper"></div>
-
         <div class="chat-input-container">
             <div class="input-group">
                 <input 
@@ -320,8 +306,6 @@
         let socket;
         let username = '';
         let userCount = 0;
-        let typingTimer;
-        let isTyping = false;
         let clientId = '';
 
         function joinChat() {
@@ -387,9 +371,6 @@
                         case 'message':
                             displayMessage(data);
                             break;
-                        case 'typing':
-                            showTypingIndicator(data);
-                            break;
                         case 'user-joined':
                             userCount++;
                             updateUserCount();
@@ -421,7 +402,6 @@
             }));
 
             input.value = '';
-            stopTyping();
         }
 
         function displayMessage(data, isOwn = false) {
@@ -452,51 +432,6 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        function showTypingIndicator(data) {
-            if (data.isTyping) {
-                const wrapper = document.getElementById('typing-wrapper');
-                wrapper.innerHTML = `<div class="typing-indicator">${data.username} đang nhập...</div>`;
-                
-                clearTimeout(typingTimer);
-                typingTimer = setTimeout(() => {
-                    wrapper.innerHTML = '';
-                }, 3000);
-            } else {
-                document.getElementById('typing-wrapper').innerHTML = '';
-            }
-        }
-
-        function handleTyping() {
-            const input = document.getElementById('message-input');
-            
-            input.addEventListener('input', () => {
-                if (!isTyping && socket && socket.readyState === WebSocket.OPEN) {
-                    isTyping = true;
-                    socket.send(JSON.stringify({
-                        type: 'typing',
-                        username: username,
-                        isTyping: true
-                    }));
-                }
-
-                clearTimeout(typingTimer);
-                typingTimer = setTimeout(() => {
-                    stopTyping();
-                }, 1000);
-            });
-        }
-
-        function stopTyping() {
-            if (isTyping && socket && socket.readyState === WebSocket.OPEN) {
-                isTyping = false;
-                socket.send(JSON.stringify({
-                    type: 'typing',
-                    username: username,
-                    isTyping: false
-                }));
-            }
-        }
-
         function updateUserCount() {
             document.getElementById('user-count').textContent = userCount;
         }
@@ -522,9 +457,6 @@
                     sendMessage();
                 }
             });
-
-            // Setup typing indicator
-            messageInput.addEventListener('input', handleTyping);
         });
     </script>
 </body>
