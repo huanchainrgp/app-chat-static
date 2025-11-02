@@ -52,253 +52,197 @@
     </div>
 
     <script>
-        /* ============================================
-           Application State
-           ============================================ */
-        const AppState = {
-            socket: null,
-            username: '',
-            userCount: 0,
-            clientId: ''
-        };
+        // ===== BIẾN LƯU THÔNG TIN =====
+        let socket = null;          // Kết nối WebSocket
+        let username = '';          // Tên người dùng
+        let userCount = 0;          // Số người đang online
+        let clientId = '';          // ID của mình
 
-        /* ============================================
-           DOM Element References
-           ============================================ */
-        const Elements = {
-            usernameModal: document.getElementById('username-modal'),
-            usernameInput: document.getElementById('username-input'),
-            chatContainer: document.getElementById('chat-container'),
-            usernameDisplay: document.getElementById('username-display'),
-            connectionIndicator: document.getElementById('connection-indicator'),
-            userCount: document.getElementById('user-count'),
-            messagesContainer: document.getElementById('messages-container'),
-            messageInput: document.getElementById('message-input')
-        };
+        // ===== LẤY CÁC PHẦN TỬ TRÊN TRANG =====
+        const usernameModal = document.getElementById('username-modal');
+        const usernameInput = document.getElementById('username-input');
+        const chatContainer = document.getElementById('chat-container');
+        const usernameDisplay = document.getElementById('username-display');
+        const connectionIndicator = document.getElementById('connection-indicator');
+        const userCountElement = document.getElementById('user-count');
+        const messagesContainer = document.getElementById('messages-container');
+        const messageInput = document.getElementById('message-input');
 
-        /* ============================================
-           Constants
-           ============================================ */
-        const MESSAGE_MAX_LENGTH = 500;
-        const USERNAME_MAX_LENGTH = 20;
-        const WS_ENDPOINT = '/ws';
-
-        /* ============================================
-           Utility Functions
-           ============================================ */
-        function escapeHtml(text) {
+        // ===== HÀM HIỂN THỊ TIN NHẮN HỆ THỐNG =====
+        function addSystemMessage(text) {
+            // Tạo một div mới
             const div = document.createElement('div');
+            div.className = 'system-message';
             div.textContent = text;
-            return div.innerHTML;
+            
+            // Thêm vào danh sách tin nhắn
+            messagesContainer.appendChild(div);
+            
+            // Cuộn xuống cuối
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        function formatTime(date) {
-            return date.toLocaleTimeString('vi-VN', {
+        // ===== HÀM HIỂN THỊ TIN NHẮN CHAT =====
+        function showMessage(data) {
+            // Tạo div cho tin nhắn
+            const div = document.createElement('div');
+            
+            // Kiểm tra có phải tin nhắn của mình không
+            const isMyMessage = clientId === data.id;
+            div.className = isMyMessage ? 'message own' : 'message other';
+            
+            // Lấy giờ hiện tại
+            const now = new Date();
+            const time = now.toLocaleTimeString('vi-VN', {
                 hour: '2-digit',
                 minute: '2-digit'
             });
-        }
-
-        function updateConnectionStatus(connected) {
-            if (connected) {
-                Elements.connectionIndicator.classList.remove('disconnected');
-                Elements.connectionIndicator.style.background = '';
-            } else {
-                Elements.connectionIndicator.classList.add('disconnected');
-            }
-        }
-
-        /* ============================================
-           UI Functions
-           ============================================ */
-        function showChatContainer() {
-            Elements.usernameModal.classList.add('hidden');
-            Elements.chatContainer.classList.remove('hidden');
-        }
-
-        function updateUserCount() {
-            Elements.userCount.textContent = AppState.userCount;
-        }
-
-        function scrollToBottom() {
-            Elements.messagesContainer.scrollTop = Elements.messagesContainer.scrollHeight;
-        }
-
-        function addSystemMessage(text) {
-            const messageDiv = document.createElement('div');
-            messageDiv.className = 'system-message';
-            messageDiv.textContent = text;
-            Elements.messagesContainer.appendChild(messageDiv);
-            scrollToBottom();
-        }
-
-        function displayMessage(data) {
-            const messageDiv = document.createElement('div');
-            const isOwnMessage = AppState.clientId === data.id;
-            messageDiv.className = `message ${isOwnMessage ? 'own' : 'other'}`;
-
-            const time = formatTime(new Date());
-            messageDiv.innerHTML = `
-                <div class="message-info">${escapeHtml(data.username)} • ${time}</div>
-                <div class="message-content">${escapeHtml(data.text)}</div>
-            `;
-
-            Elements.messagesContainer.appendChild(messageDiv);
-            scrollToBottom();
-        }
-
-        /* ============================================
-           WebSocket Functions
-           ============================================ */
-        function getWebSocketUrl() {
-            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            return `${protocol}//${window.location.host}${WS_ENDPOINT}`;
-        }
-
-        function sendJoinMessage() {
-            if (AppState.socket && AppState.socket.readyState === WebSocket.OPEN) {
-                AppState.socket.send(JSON.stringify({
-                    type: 'join',
-                    username: AppState.username
-                }));
-            }
-        }
-
-        function sendChatMessage(message) {
-            if (!AppState.socket || AppState.socket.readyState !== WebSocket.OPEN) {
-                return false;
-            }
-
-            AppState.socket.send(JSON.stringify({
-                type: 'message',
-                username: AppState.username,
-                text: message,
-                price: 129999
-            }));
-
-            return true;
-        }
-
-        function setupSocketEvents() {
-            AppState.socket.onopen = () => {
-                updateConnectionStatus(true);
-                addSystemMessage('Đã kết nối với server');
-                
-                // Send join message after connection is established
-                if (AppState.clientId) {
-                    sendJoinMessage();
-                }
-            };
-
-            AppState.socket.onclose = () => {
-                updateConnectionStatus(false);
-                addSystemMessage('Mất kết nối với server');
-            };
-
-            AppState.socket.onerror = (error) => {
-                console.error('WebSocket error:', error);
-                updateConnectionStatus(false);
-            };
-
-            AppState.socket.onmessage = (event) => {
-                try {
-                    const data = JSON.parse(event.data);
-                    handleWebSocketMessage(data);
-                } catch (error) {
-                    console.error('Error parsing message:', error);
-                }
-            };
-        }
-
-        function handleWebSocketMessage(data) {
-            switch (data.type) {
-                case 'connect':
-                    AppState.clientId = data.id;
-                    sendJoinMessage();
-                    break;
-
-                case 'message':
-                    displayMessage(data);
-                    break;
-
-                case 'user-joined':
-                    AppState.userCount++;
-                    updateUserCount();
-                    addSystemMessage(`${data.username || 'Ai đó'} đã tham gia chat`);
-                    break;
-
-                case 'user-left':
-                    AppState.userCount = Math.max(0, AppState.userCount - 1);
-                    updateUserCount();
-                    addSystemMessage(`${data.username || 'Ai đó'} đã rời chat`);
-                    break;
-
-                default:
-                    console.warn('Unknown message type:', data.type);
-            }
-        }
-
-        /* ============================================
-           Main Functions
-           ============================================ */
-        function joinChat() {
-            const username = Elements.usernameInput.value.trim();
             
-            if (!username) {
+            // Bảo vệ khỏi mã độc (escape HTML)
+            const safeUsername = data.username.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const safeText = data.text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            
+            // Hiển thị tin nhắn
+            div.innerHTML = `
+                <div class="message-info">${safeUsername} • ${time}</div>
+                <div class="message-content">${safeText}</div>
+            `;
+            
+            // Thêm vào danh sách và cuộn xuống
+            messagesContainer.appendChild(div);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+
+        // ===== VÀO CHAT =====
+        function joinChat() {
+            // Lấy tên người dùng
+            const name = usernameInput.value.trim();
+            
+            // Kiểm tra đã nhập tên chưa
+            if (!name) {
                 alert('Vui lòng nhập tên của bạn!');
                 return;
             }
 
-            AppState.username = username;
-            Elements.usernameDisplay.textContent = username;
+            // Lưu tên và hiển thị
+            username = name;
+            usernameDisplay.textContent = name;
 
-            // Initialize WebSocket connection
-            const wsUrl = getWebSocketUrl();
-            AppState.socket = new WebSocket(wsUrl);
+            // Tạo đường dẫn WebSocket
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            // Tạo kết nối WebSocket
+            socket = new WebSocket(wsUrl);
 
-            showChatContainer();
-            setupSocketEvents();
+            // Ẩn form nhập tên, hiện giao diện chat
+            usernameModal.classList.add('hidden');
+            chatContainer.classList.remove('hidden');
+
+            // Xử lý khi kết nối thành công
+            socket.onopen = () => {
+                connectionIndicator.classList.remove('disconnected');
+                addSystemMessage('Đã kết nối với server');
+                
+                // Gửi tin nhắn join nếu đã có clientId
+                if (clientId && socket.readyState === WebSocket.OPEN) {
+                    socket.send(JSON.stringify({
+                        type: 'join',
+                        username: username
+                    }));
+                }
+            };
+
+            // Xử lý khi mất kết nối
+            socket.onclose = () => {
+                connectionIndicator.classList.add('disconnected');
+                addSystemMessage('Mất kết nối với server');
+            };
+
+            // Xử lý khi có lỗi
+            socket.onerror = (error) => {
+                console.error('Lỗi WebSocket:', error);
+                connectionIndicator.classList.add('disconnected');
+            };
+
+            // Xử lý khi nhận tin nhắn từ server
+            socket.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    // Xử lý theo loại tin nhắn
+                    if (data.type === 'connect') {
+                        // Server gửi ID cho mình
+                        clientId = data.id;
+                        // Gửi tin nhắn join
+                        socket.send(JSON.stringify({
+                            type: 'join',
+                            username: username
+                        }));
+                    }
+                    else if (data.type === 'message') {
+                        // Hiển thị tin nhắn chat
+                        showMessage(data);
+                    }
+                    else if (data.type === 'user-joined') {
+                        // Có người tham gia
+                        userCount++;
+                        userCountElement.textContent = userCount;
+                        addSystemMessage(`${data.username || 'Ai đó'} đã tham gia chat`);
+                    }
+                    else if (data.type === 'user-left') {
+                        // Có người rời đi
+                        userCount = Math.max(0, userCount - 1);
+                        userCountElement.textContent = userCount;
+                        addSystemMessage(`${data.username || 'Ai đó'} đã rời chat`);
+                    }
+                } catch (error) {
+                    console.error('Lỗi khi đọc tin nhắn:', error);
+                }
+            };
         }
 
+        // ===== GỬI TIN NHẮN =====
         function sendMessage() {
-            const message = Elements.messageInput.value.trim();
+            // Lấy nội dung tin nhắn
+            const message = messageInput.value.trim();
             
+            // Nếu rỗng thì không làm gì
             if (!message) {
                 return;
             }
 
-            if (sendChatMessage(message)) {
-                Elements.messageInput.value = '';
-            } else {
+            // Kiểm tra kết nối
+            if (!socket || socket.readyState !== WebSocket.OPEN) {
                 addSystemMessage('Không thể gửi tin nhắn. Vui lòng kiểm tra kết nối.');
+                return;
             }
+
+            // Gửi tin nhắn
+            socket.send(JSON.stringify({
+                type: 'message',
+                username: username,
+                text: message,
+                price: 129999
+            }));
+
+            // Xóa ô nhập
+            messageInput.value = '';
         }
 
-        /* ============================================
-           Event Listeners
-           ============================================ */
-        function initializeEventListeners() {
-            // Username input - Enter key to join
-            Elements.usernameInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    joinChat();
-                }
-            });
+        // ===== BẤM ENTER Ở Ô NHẬP TÊN =====
+        usernameInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                joinChat();
+            }
+        });
 
-            // Message input - Enter key to send
-            Elements.messageInput.addEventListener('keypress', (e) => {
-                if (e.key === 'Enter') {
-                    sendMessage();
-                }
-            });
-        }
-
-        // Initialize when DOM is ready
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializeEventListeners);
-        } else {
-            initializeEventListeners();
-        }
+        // ===== BẤM ENTER Ở Ô NHẬP TIN NHẮN =====
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
     </script>
 </body>
 </html>
