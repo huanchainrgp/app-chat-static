@@ -9,7 +9,6 @@ A Go server with native WebSocket support for real-time chat functionality.
 - Beautiful chat client (`status.html`) with real-time messaging
 - Admin monitoring dashboard (`admin.html`)
 - Support for multiple concurrent clients
-- Real-time typing indicators
 - User join/leave notifications
 - Connection status monitoring
 
@@ -91,15 +90,6 @@ The server uses native WebSocket with JSON message format. All messages are sent
   }
   ```
 
-- **`typing`** - Send typing indicator
-  ```json
-  {
-    "type": "typing",
-    "username": "John",
-    "isTyping": true
-  }
-  ```
-
 ### Server to Client Messages
 
 - **`connect`** - Connection confirmation (sent immediately after WebSocket connection)
@@ -118,15 +108,6 @@ The server uses native WebSocket with JSON message format. All messages are sent
     "username": "John",
     "text": "Hello everyone!",
     "timestamp": "2024-01-01T12:00:00Z"
-  }
-  ```
-
-- **`typing`** - Receive typing indicator
-  ```json
-  {
-    "type": "typing",
-    "username": "John",
-    "isTyping": true
   }
   ```
 
@@ -203,7 +184,6 @@ The `status.html` file is the main chat application client interface. It's a sin
 
 - **Username Entry Modal**: Users must enter a username before joining the chat (max 20 characters)
 - **Real-time Messaging**: Instant message delivery via WebSocket
-- **Typing Indicators**: Shows when other users are typing (appears for 3 seconds)
 - **User Count Display**: Displays the number of online users
 - **Connection Status**: Visual indicator (green/red dot) showing connection state
 - **Message History**: Scrollable chat history with timestamps
@@ -229,10 +209,6 @@ The `status.html` file is the main chat application client interface. It's a sin
    - Send button
    - Enter key support for sending messages
 
-4. **Typing Indicator**
-   - Shows below messages when someone is typing
-   - Automatically disappears after 1 second of inactivity
-
 ### WebSocket Protocol
 
 The client communicates with the server using JSON messages over WebSocket:
@@ -256,15 +232,6 @@ The client communicates with the server using JSON messages over WebSocket:
   }
   ```
 
-- **Typing Indicator**:
-  ```json
-  {
-    "type": "typing",
-    "username": "John",
-    "isTyping": true
-  }
-  ```
-
 #### Server to Client Messages
 
 - **Connection Confirmation**:
@@ -282,15 +249,6 @@ The client communicates with the server using JSON messages over WebSocket:
     "id": "client-id",
     "username": "John",
     "text": "Hello everyone!"
-  }
-  ```
-
-- **Typing Indicator**:
-  ```json
-  {
-    "type": "typing",
-    "username": "John",
-    "isTyping": true
   }
   ```
 
