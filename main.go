@@ -27,7 +27,6 @@ type Client struct {
 	Conn     *websocket.Conn
 	Hub      *Hub
 	Send     chan []byte
-	mu       sync.Mutex
 }
 
 // Hub maintains the set of active clients and broadcasts messages
@@ -121,10 +120,6 @@ func (c *Client) ReadPump() {
 		case "join":
 			if username, ok := msg["username"].(string); ok {
 				c.Username = username
-				c.mu.Lock()
-				oldID := c.ID
-				monitoringData.UpdateUsername(oldID, username)
-				c.mu.Unlock()
 
 				// Broadcast user joined
 				response := map[string]interface{}{
@@ -141,8 +136,6 @@ func (c *Client) ReadPump() {
 				username = u
 			}
 			text, _ := msg["text"].(string)
-
-			monitoringData.AddMessage(c.ID, username, text)
 
 			// Broadcast message to all clients including sender
 			response := map[string]interface{}{
@@ -235,216 +228,6 @@ func (c *Client) broadcastToOthers(data map[string]interface{}) {
 	c.Hub.mu.RUnlock()
 }
 
-// Connection represents a connected client
-type Connection struct {
-	ID           string    `json:"id"`
-	ConnectedAt  time.Time `json:"connectedAt"`
-	Username     *string   `json:"username"`
-	MessagesSent int       `json:"messagesSent"`
-	LastActivity time.Time `json:"lastActivity"`
-}
-
-// Message represents a chat message
-type Message struct {
-	ID        string    `json:"id"`
-	Username  string    `json:"username"`
-	Text      string    `json:"text"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-// Event represents a monitoring event
-type Event struct {
-	Type      string    `json:"type"`
-	SocketID  string    `json:"socketId"`
-	Username  string    `json:"username,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
-	Message   string    `json:"message"`
-}
-
-// MonitoringData stores all monitoring information
-type MonitoringData struct {
-	StartTime     time.Time
-	Connections   map[string]*Connection
-	TotalMessages int64
-	TotalEvents   int64
-	Messages      []Message
-	Events        []Event
-	mu            sync.RWMutex
-}
-
-// NewMonitoringData creates a new monitoring data instance
-func NewMonitoringData() *MonitoringData {
-	return &MonitoringData{
-		StartTime:   time.Now(),
-		Connections: make(map[string]*Connection),
-		Messages:    make([]Message, 0),
-		Events:      make([]Event, 0),
-	}
-}
-
-// AddConnection adds a new connection
-func (m *MonitoringData) AddConnection(id string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.Connections[id] = &Connection{
-		ID:           id,
-		ConnectedAt:  time.Now(),
-		Username:     nil,
-		MessagesSent: 0,
-		LastActivity: time.Now(),
-	}
-
-	m.Events = append(m.Events, Event{
-		Type:      "connection",
-		SocketID:  id,
-		Timestamp: time.Now(),
-		Message:   "Client connected",
-	})
-	m.TotalEvents++
-
-	// Keep only last 500 events
-	if len(m.Events) > 500 {
-		m.Events = m.Events[len(m.Events)-500:]
-	}
-}
-
-// RemoveConnection removes a connection
-func (m *MonitoringData) RemoveConnection(id string, username string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	delete(m.Connections, id)
-
-	m.Events = append(m.Events, Event{
-		Type:      "disconnection",
-		SocketID:  id,
-		Username:  username,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("%s disconnected", username),
-	})
-	m.TotalEvents++
-
-	// Keep only last 500 events
-	if len(m.Events) > 500 {
-		m.Events = m.Events[len(m.Events)-500:]
-	}
-}
-
-// AddMessage adds a message
-func (m *MonitoringData) AddMessage(id, username, text string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.TotalMessages++
-	m.TotalEvents++
-
-	conn, exists := m.Connections[id]
-	if exists {
-		conn.MessagesSent++
-		conn.LastActivity = time.Now()
-	}
-
-	message := Message{
-		ID:        id,
-		Username:  username,
-		Text:      text,
-		Timestamp: time.Now(),
-	}
-	m.Messages = append(m.Messages, message)
-
-	// Keep only last 100 messages
-	if len(m.Messages) > 100 {
-		m.Messages = m.Messages[1:]
-	}
-
-	m.Events = append(m.Events, Event{
-		Type:      "message",
-		SocketID:  id,
-		Username:  username,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("Message from %s", username),
-	})
-
-	// Keep only last 500 events
-	if len(m.Events) > 500 {
-		m.Events = m.Events[len(m.Events)-500:]
-	}
-}
-
-// UpdateUsername updates a connection's username
-func (m *MonitoringData) UpdateUsername(id, username string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if conn, exists := m.Connections[id]; exists {
-		conn.Username = &username
-		conn.LastActivity = time.Now()
-	}
-
-	m.Events = append(m.Events, Event{
-		Type:      "join",
-		SocketID:  id,
-		Username:  username,
-		Timestamp: time.Now(),
-		Message:   fmt.Sprintf("%s joined the chat", username),
-	})
-	m.TotalEvents++
-
-	// Keep only last 500 events
-	if len(m.Events) > 500 {
-		m.Events = m.Events[len(m.Events)-500:]
-	}
-}
-
-// GetStatus returns status information
-func (m *MonitoringData) GetStatus() map[string]interface{} {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	return map[string]interface{}{
-		"status":            "running",
-		"uptime":            time.Since(m.StartTime).Milliseconds(),
-		"startTime":         m.StartTime.Format(time.RFC3339),
-		"currentTime":       time.Now().Format(time.RFC3339),
-		"activeConnections": len(m.Connections),
-		"totalMessages":     m.TotalMessages,
-		"totalEvents":       m.TotalEvents,
-	}
-}
-
-// GetMonitoring returns monitoring information
-func (m *MonitoringData) GetMonitoring() map[string]interface{} {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	connections := make([]Connection, 0, len(m.Connections))
-	for _, conn := range m.Connections {
-		connections = append(connections, *conn)
-	}
-
-	recentMessages := m.Messages
-	if len(recentMessages) > 50 {
-		recentMessages = recentMessages[len(recentMessages)-50:]
-	}
-
-	recentEvents := m.Events
-	if len(recentEvents) > 100 {
-		recentEvents = recentEvents[len(recentEvents)-100:]
-	}
-
-	return map[string]interface{}{
-		"uptime":           time.Since(m.StartTime).Milliseconds(),
-		"connections":      connections,
-		"totalConnections": len(m.Connections),
-		"totalMessages":    m.TotalMessages,
-		"totalEvents":      m.TotalEvents,
-		"recentMessages":   recentMessages,
-		"recentEvents":     recentEvents,
-	}
-}
-
-var monitoringData = NewMonitoringData()
 var hub = NewHub()
 
 func main() {
@@ -473,18 +256,6 @@ func main() {
 		c.File("./status.html")
 	})
 
-	router.GET("/admin", func(c *gin.Context) {
-		c.File("./admin.html")
-	})
-
-	router.GET("/api/status", func(c *gin.Context) {
-		c.JSON(http.StatusOK, monitoringData.GetStatus())
-	})
-
-	router.GET("/api/monitoring", func(c *gin.Context) {
-		c.JSON(http.StatusOK, monitoringData.GetMonitoring())
-	})
-
 	// WebSocket endpoint
 	router.GET("/ws", func(c *gin.Context) {
 		handleWebSocket(c.Writer, c.Request)
@@ -509,7 +280,6 @@ func main() {
 	log.Printf("Server running on http://localhost:%s", port)
 	log.Printf("WebSocket server ready for connections at ws://localhost:%s/ws", port)
 	log.Printf("Chat app: http://localhost:%s", port)
-	log.Printf("Monitoring dashboard: http://localhost:%s/admin", port)
 
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal("Failed to start server:", err)
@@ -531,8 +301,6 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		Hub:      hub,
 		Send:     make(chan []byte, 256),
 	}
-
-	monitoringData.AddConnection(clientID)
 
 	hub.register <- client
 
