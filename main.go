@@ -24,18 +24,37 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
+	"golang.org/x/crypto/bcrypt"
 )
+
+func init() {
+	configureLogger()
+}
+
+func configureLogger() {
+	zerolog.TimeFieldFormat = time.RFC3339
+	log.Logger = log.Output(zerolog.ConsoleWriter{
+		Out:        os.Stdout,
+		TimeFormat: time.RFC3339,
+	})
+}
 
 // upgrader upgrades HTTP connections to WebSocket connections.
 // CheckOrigin is set to allow all origins (useful for development and cross-origin scenarios).
@@ -55,9 +74,174 @@ var upgrader = websocket.Upgrader{
 type Client struct {
 	ID       string          // Unique client identifier
 	Username string          // Display name (can be empty initially)
+	Room     string          // Current room
+	Joined   bool            // Whether the client finished join handshake
 	Conn     *websocket.Conn // WebSocket connection
 	Hub      *Hub            // Reference to the message hub
 	Send     chan []byte     // Channel for sending messages to this client
+}
+
+// Broadcast represents a room-scoped message that should be delivered
+// to all clients inside the same room, optionally excluding the sender.
+type Broadcast struct {
+	Room    string
+	Data    []byte
+	Exclude *Client
+}
+
+// UserStore manages registration credentials and active sessions.
+type UserStore struct {
+	mu       sync.RWMutex
+	users    map[string]string // username -> hashed password
+	sessions map[string]string // token -> username
+}
+
+// Room represents a chat room metadata record.
+type Room struct {
+	Name      string    `json:"name"`
+	CreatedAt time.Time `json:"createdAt"`
+}
+
+// RoomStore stores available rooms.
+type RoomStore struct {
+	mu    sync.RWMutex
+	rooms map[string]*Room
+}
+
+// NewUserStore creates a new user store.
+func NewUserStore() *UserStore {
+	return &UserStore{
+		users:    make(map[string]string),
+		sessions: make(map[string]string),
+	}
+}
+
+// Register creates a new user and returns an auth token.
+func (s *UserStore) Register(username, password string) (string, error) {
+	username = strings.TrimSpace(strings.ToLower(username))
+	if len(username) < 3 {
+		return "", errors.New("tên người dùng phải có ít nhất 3 ký tự")
+	}
+	if len(password) < 6 {
+		return "", errors.New("mật khẩu phải có ít nhất 6 ký tự")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.users[username]; exists {
+		return "", errors.New("tên người dùng đã tồn tại")
+	}
+
+	hashed, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return "", err
+	}
+
+	s.users[username] = string(hashed)
+	return s.createSession(username)
+}
+
+// Login validates credentials and returns a token.
+func (s *UserStore) Login(username, password string) (string, error) {
+	username = strings.TrimSpace(strings.ToLower(username))
+
+	s.mu.RLock()
+	hashed, exists := s.users[username]
+	s.mu.RUnlock()
+
+	if !exists {
+		return "", errors.New("sai tên đăng nhập hoặc mật khẩu")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(hashed), []byte(password)); err != nil {
+		return "", errors.New("sai tên đăng nhập hoặc mật khẩu")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.createSession(username)
+}
+
+func (s *UserStore) createSession(username string) (string, error) {
+	token, err := generateToken()
+	if err != nil {
+		return "", err
+	}
+	s.sessions[token] = username
+	return token, nil
+}
+
+// ValidateToken returns username for a given token.
+func (s *UserStore) ValidateToken(token string) (string, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	username, ok := s.sessions[token]
+	return username, ok
+}
+
+// NewRoomStore initializes rooms with a default "general" room.
+func NewRoomStore() *RoomStore {
+	store := &RoomStore{
+		rooms: make(map[string]*Room),
+	}
+	store.rooms["general"] = &Room{
+		Name:      "general",
+		CreatedAt: time.Now(),
+	}
+	return store
+}
+
+// generateToken returns a random 32-byte hex token.
+func generateToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+var roomNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{3,30}$`)
+
+// CreateRoom registers a new room.
+func (r *RoomStore) CreateRoom(name string) error {
+	name = strings.TrimSpace(strings.ToLower(name))
+	if !roomNamePattern.MatchString(name) {
+		return errors.New("tên phòng phải từ 3-30 ký tự, chỉ gồm chữ, số, -, _")
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if _, exists := r.rooms[name]; exists {
+		return errors.New("phòng đã tồn tại")
+	}
+
+	r.rooms[name] = &Room{
+		Name:      name,
+		CreatedAt: time.Now(),
+	}
+	return nil
+}
+
+// Exists checks if a room is available.
+func (r *RoomStore) Exists(name string) bool {
+	name = strings.TrimSpace(strings.ToLower(name))
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	_, ok := r.rooms[name]
+	return ok
+}
+
+// List returns all rooms.
+func (r *RoomStore) List() []*Room {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	result := make([]*Room, 0, len(r.rooms))
+	for _, room := range r.rooms {
+		result = append(result, room)
+	}
+	return result
 }
 
 // Hub is the central message broker that manages all client connections.
@@ -74,7 +258,7 @@ type Client struct {
 //  3. Broadcast messages (sends message to all connected clients)
 type Hub struct {
 	clients    map[*Client]bool // Active client connections
-	broadcast  chan []byte      // Channel for broadcasting messages to all clients
+	broadcast  chan Broadcast   // Channel for broadcasting messages to all clients
 	register   chan *Client     // Channel for registering new clients
 	unregister chan *Client     // Channel for unregistering clients
 	mu         sync.RWMutex     // Mutex for thread-safe map operations
@@ -85,10 +269,31 @@ type Hub struct {
 func NewHub() *Hub {
 	return &Hub{
 		clients:    make(map[*Client]bool), // Initialize empty clients map
-		broadcast:  make(chan []byte),      // Unbuffered channel for broadcasts
+		broadcast:  make(chan Broadcast),   // Unbuffered channel for broadcasts
 		register:   make(chan *Client),     // Unbuffered channel for registrations
 		unregister: make(chan *Client),     // Unbuffered channel for unregistrations
 	}
+}
+
+// RoomMemberCount returns the number of clients in a room.
+func (h *Hub) RoomMemberCount(room string) int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	count := 0
+	for client := range h.clients {
+		if client.Room == room {
+			count++
+		}
+	}
+	return count
+}
+
+// HasClient checks if a client is still registered inside the hub.
+func (h *Hub) HasClient(target *Client) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	_, ok := h.clients[target]
+	return ok
 }
 
 // Run starts the hub's main event loop. This should be called in a goroutine.
@@ -108,7 +313,7 @@ func (h *Hub) Run() {
 			h.mu.Lock()
 			h.clients[client] = true
 			h.mu.Unlock()
-			log.Printf("Client registered: %s", client.ID)
+			log.Debug().Str("client_id", client.ID).Msg("Client registered")
 
 		case client := <-h.unregister:
 			// Client disconnected - remove and cleanup
@@ -118,17 +323,21 @@ func (h *Hub) Run() {
 				close(client.Send) // Signal WritePump to exit
 			}
 			h.mu.Unlock()
-			log.Printf("Client unregistered: %s", client.ID)
+			log.Debug().Str("client_id", client.ID).Msg("Client unregistered")
 
 		case message := <-h.broadcast:
-			// Broadcast message to all active clients
-			h.mu.RLock() // Use read lock since we're only reading the map
+			// Broadcast message to all active clients in the same room
+			h.mu.RLock()
 			for client := range h.clients {
+				if client.Room != message.Room {
+					continue
+				}
+				if message.Exclude != nil && client == message.Exclude {
+					continue
+				}
 				select {
-				case client.Send <- message:
-					// Message sent successfully
+				case client.Send <- message.Data:
 				default:
-					// Send channel is blocked (client too slow) - remove them
 					close(client.Send)
 					delete(h.clients, client)
 				}
@@ -155,6 +364,9 @@ func (h *Hub) Run() {
 func (c *Client) ReadPump() {
 	// Ensure cleanup happens when this goroutine exits
 	defer func() {
+		if c.Joined && c.Room != "" {
+			c.broadcastPresence("user-left", false)
+		}
 		c.Hub.unregister <- c // Signal hub to remove this client
 		c.Conn.Close()        // Close WebSocket connection
 	}()
@@ -175,7 +387,7 @@ func (c *Client) ReadPump() {
 		if err != nil {
 			// Log unexpected errors (normal closes are handled silently)
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("WebSocket error: %v", err)
+				log.Warn().Err(err).Msg("WebSocket unexpected close")
 			}
 			break // Exit loop and trigger defer cleanup
 		}
@@ -183,7 +395,7 @@ func (c *Client) ReadPump() {
 		// Parse incoming JSON message
 		var msg map[string]interface{}
 		if err := json.Unmarshal(messageBytes, &msg); err != nil {
-			log.Printf("Error parsing message: %v", err)
+			log.Error().Err(err).Msg("Failed to parse incoming message")
 			continue // Skip malformed messages
 		}
 
@@ -196,40 +408,48 @@ func (c *Client) ReadPump() {
 		// Route message based on type
 		switch eventType {
 		case "join":
-			// Client is joining the chat - set username
-			if username, ok := msg["username"].(string); ok {
-				c.Username = username
-
-				// Notify all other clients that a user joined
-				response := map[string]interface{}{
-					"type":     "user-joined",
-					"username": username,
-					"id":       c.ID,
-				}
-				c.broadcastToOthers(response) // Don't notify the sender
+			// Finish handshake: only handle first join message
+			if c.Joined || c.Room == "" {
+				continue
 			}
+			c.Joined = true
+
+			// Notify others
+			c.broadcastPresence("user-joined", true)
+
+			// Send room count back to the joining client
+			c.sendDirect(map[string]interface{}{
+				"type":  "room-count",
+				"room":  c.Room,
+				"count": c.roomCount(true),
+			})
 
 		case "message":
-			// Client is sending a chat message
-			username := c.Username // Default to client's stored username
-			if u, ok := msg["username"].(string); ok {
-				username = u // Override with message username if provided
+			if !c.Joined || c.Room == "" {
+				continue
 			}
+
+			// Client is sending a chat message
 			text, _ := msg["text"].(string)
+			text = strings.TrimSpace(text)
+			if text == "" {
+				continue
+			}
 
 			// Build response message with timestamp
 			response := map[string]interface{}{
 				"type":      "message",
 				"id":        c.ID,
-				"username":  username,
+				"username":  c.Username,
 				"text":      text,
+				"room":      c.Room,
 				"timestamp": time.Now().Format(time.RFC3339), // ISO 8601 format
 			}
 			// Include price field if present (optional field for special message types)
 			if price, ok := msg["price"]; ok {
 				response["price"] = price
 			}
-			c.broadcastToAll(response) // Broadcast to all including sender
+			c.broadcastToRoom(true, response) // Broadcast to all including sender
 		}
 	}
 }
@@ -300,55 +520,72 @@ func (c *Client) WritePump() {
 	}
 }
 
-// broadcastToAll broadcasts a message to all connected clients, including the sender.
-// The message is JSON-marshaled and sent to the hub's broadcast channel.
-// Used for chat messages so the sender can see their own message echoed back.
-func (c *Client) broadcastToAll(data map[string]interface{}) {
-	messageBytes, err := json.Marshal(data)
-	if err != nil {
-		log.Printf("Error marshaling message: %v", err)
+// broadcastToRoom sends a message to all users in the client's room.
+func (c *Client) broadcastToRoom(includeSelf bool, data map[string]interface{}) {
+	if c.Room == "" {
 		return
 	}
-	// Send to hub's broadcast channel - hub will distribute to all clients
-	c.Hub.broadcast <- messageBytes
+	messageBytes, err := json.Marshal(data)
+	if err != nil {
+		log.Error().Err(err).Msg("Failed to marshal broadcast payload")
+		return
+	}
+
+	var exclude *Client
+	if !includeSelf {
+		exclude = c
+	}
+
+	c.Hub.broadcast <- Broadcast{
+		Room:    c.Room,
+		Data:    messageBytes,
+		Exclude: exclude,
+	}
 }
 
-// broadcastToOthers broadcasts a message to all connected clients except the sender.
-// This method directly iterates through clients (with read lock) instead of using
-// the hub's broadcast channel, allowing it to exclude the sender.
-//
-// Used for notifications like "user joined" where the sender doesn't need to
-// see their own join notification.
-//
-// If a client's Send channel is full, that client is automatically removed
-// to prevent blocking (same safety mechanism as in Hub.Run).
-func (c *Client) broadcastToOthers(data map[string]interface{}) {
+// sendDirect queues a message directly to this client.
+func (c *Client) sendDirect(data map[string]interface{}) {
 	messageBytes, err := json.Marshal(data)
 	if err != nil {
-		log.Printf("Error marshaling message: %v", err)
+		log.Error().Err(err).Msg("Failed to marshal direct payload")
 		return
 	}
 
-	// Lock clients map for reading
-	c.Hub.mu.RLock()
-	for client := range c.Hub.clients {
-		if client != c { // Skip the sender
-			select {
-			case client.Send <- messageBytes:
-				// Message queued successfully
-			default:
-				// Send channel blocked - remove slow client
-				close(client.Send)
-				delete(c.Hub.clients, client)
-			}
-		}
+	select {
+	case c.Send <- messageBytes:
+	default:
+		log.Warn().Str("client_id", c.ID).Msg("Send buffer full")
 	}
-	c.Hub.mu.RUnlock()
+}
+
+// roomCount calculates the current room size with optional inclusion of self.
+func (c *Client) roomCount(includeSelf bool) int {
+	count := c.Hub.RoomMemberCount(c.Room)
+	if !includeSelf && count > 0 && c.Hub.HasClient(c) {
+		count--
+	}
+	return count
+}
+
+// broadcastPresence notifies the room of joins/leaves.
+func (c *Client) broadcastPresence(eventType string, includeSelf bool) {
+	data := map[string]interface{}{
+		"type":     eventType,
+		"username": c.Username,
+		"id":       c.ID,
+		"room":     c.Room,
+		"count":    c.roomCount(includeSelf),
+	}
+	c.broadcastToRoom(false, data)
 }
 
 // hub is the global message broker instance.
 // All WebSocket clients register with this hub for message broadcasting.
-var hub = NewHub()
+var (
+	hub       = NewHub()
+	userStore = NewUserStore()
+	roomStore = NewRoomStore()
+)
 
 // main is the entry point of the application.
 // It initializes and starts the HTTP server with WebSocket support.
@@ -394,6 +631,12 @@ func main() {
 		c.File("./status.html")
 	})
 
+	// Auth + room APIs
+	router.POST("/api/register", handleRegister)
+	router.POST("/api/login", handleLogin)
+	router.GET("/api/rooms", handleListRooms)
+	router.POST("/api/rooms", handleCreateRoom)
+
 	// WebSocket endpoint: handles upgrade to WebSocket protocol
 	router.GET("/ws", func(c *gin.Context) {
 		handleWebSocket(c.Writer, c.Request)
@@ -417,13 +660,13 @@ func main() {
 	}
 
 	// Log server startup information
-	log.Printf("Server running on http://localhost:%s", port)
-	log.Printf("WebSocket server ready for connections at ws://localhost:%s/ws", port)
-	log.Printf("Chat app: http://localhost:%s", port)
+	log.Info().Msgf("Server running on http://localhost:%s", port)
+	log.Info().Msgf("WebSocket endpoint ready at ws://localhost:%s/ws", port)
+	log.Info().Msgf("Chat app UI: http://localhost:%s", port)
 
 	// Start server (blocks until error or shutdown)
 	if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatal("Failed to start server:", err)
+		log.Fatal().Err(err).Msg("Failed to start server")
 	}
 }
 
@@ -447,10 +690,30 @@ func main() {
 //   - "join" messages to set username
 //   - "message" messages to chat
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
+	query := r.URL.Query()
+	token := query.Get("token")
+	roomName := strings.TrimSpace(strings.ToLower(query.Get("room")))
+
+	if token == "" {
+		http.Error(w, "missing token", http.StatusUnauthorized)
+		return
+	}
+
+	username, ok := userStore.ValidateToken(token)
+	if !ok {
+		http.Error(w, "token không hợp lệ", http.StatusUnauthorized)
+		return
+	}
+
+	if roomName == "" || !roomStore.Exists(roomName) {
+		http.Error(w, "phòng không tồn tại", http.StatusBadRequest)
+		return
+	}
+
 	// Upgrade HTTP connection to WebSocket
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("WebSocket upgrade error: %v", err)
+		log.Error().Err(err).Msg("WebSocket upgrade failed")
 		return // Upgrade failed, connection already handled
 	}
 
@@ -461,7 +724,8 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	// Create new client instance
 	client := &Client{
 		ID:       clientID,               // Unique identifier
-		Username: "",                     // Will be set when user sends "join"
+		Username: username,               // Already authenticated
+		Room:     roomName,               // Room from query
 		Conn:     conn,                   // WebSocket connection
 		Hub:      hub,                    // Reference to global hub
 		Send:     make(chan []byte, 256), // Buffered channel for outgoing messages
@@ -471,19 +735,124 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	hub.register <- client
 
 	// Send connection confirmation to client
-	// This lets the client know the connection is established and provides their ID
 	conn.WriteJSON(map[string]interface{}{
-		"type": "connect",
-		"id":   clientID,
+		"type":  "connect",
+		"id":    clientID,
+		"room":  roomName,
+		"name":  username,
+		"count": hub.RoomMemberCount(roomName),
 	})
 
-	log.Printf("######################### handleWebSocket")
-	log.Printf("######################### Client connected: %s", clientID)
-	log.Printf("######################### handleWebSocket")
-	log.Printf("######################### handleWebSocket")
+	log.Debug().
+		Str("client_id", clientID).
+		Str("room", roomName).
+		Msg("Client connected")
 
 	// Start separate goroutines for reading and writing
 	// These run concurrently and handle bidirectional communication
 	go client.WritePump() // Handles outgoing messages from hub
 	go client.ReadPump()  // Handles incoming messages from client
+}
+
+// ===== HTTP Handlers =====
+type authRequest struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
+type authResponse struct {
+	Token    string `json:"token"`
+	Username string `json:"username"`
+}
+
+func handleRegister(c *gin.Context) {
+	var req authRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dữ liệu không hợp lệ"})
+		return
+	}
+
+	token, err := userStore.Register(req.Username, req.Password)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, authResponse{
+		Token:    token,
+		Username: strings.TrimSpace(strings.ToLower(req.Username)),
+	})
+}
+
+func handleLogin(c *gin.Context) {
+	var req authRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dữ liệu không hợp lệ"})
+		return
+	}
+
+	token, err := userStore.Login(req.Username, req.Password)
+	if err != nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, authResponse{
+		Token:    token,
+		Username: strings.TrimSpace(strings.ToLower(req.Username)),
+	})
+}
+
+func handleListRooms(c *gin.Context) {
+	rooms := roomStore.List()
+	payload := make([]gin.H, 0, len(rooms))
+	for _, room := range rooms {
+		payload = append(payload, gin.H{
+			"name":       room.Name,
+			"created_at": room.CreatedAt,
+			"members":    hub.RoomMemberCount(room.Name),
+		})
+	}
+	c.JSON(http.StatusOK, gin.H{"rooms": payload})
+}
+
+func handleCreateRoom(c *gin.Context) {
+	token := parseAuthToken(c.GetHeader("Authorization"))
+	if token == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "thiếu token"})
+		return
+	}
+	if _, ok := userStore.ValidateToken(token); !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "token không hợp lệ"})
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "dữ liệu không hợp lệ"})
+		return
+	}
+
+	if err := roomStore.CreateRoom(req.Name); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"name": strings.TrimSpace(strings.ToLower(req.Name))})
+}
+
+func parseAuthToken(header string) string {
+	if header == "" {
+		return ""
+	}
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 {
+		return ""
+	}
+	if !strings.EqualFold(parts[0], "Bearer") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
 }

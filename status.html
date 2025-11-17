@@ -7,17 +7,47 @@
     <link rel="stylesheet" href="chat.css">
 </head>
 <body>
-    <!-- Username Input Modal -->
-    <div class="username-input-container" id="username-modal">
-        <div class="username-modal">
-            <h2>Nhập tên của bạn</h2>
-            <input 
-                type="text" 
-                id="username-input" 
-                placeholder="Tên của bạn..." 
-                maxlength="20"
-            >
-            <button onclick="joinChat()">Vào Chat</button>
+    <!-- Auth Modal -->
+    <div class="auth-container" id="auth-modal">
+        <div class="auth-modal">
+            <h2>Đăng nhập để bắt đầu</h2>
+            <div class="auth-tabs">
+                <button class="auth-tab active" id="login-tab" onclick="switchAuthMode('login')">Đăng nhập</button>
+                <button class="auth-tab" id="register-tab" onclick="switchAuthMode('register')">Đăng ký</button>
+            </div>
+            <div class="auth-form">
+                <input 
+                    type="text" 
+                    id="auth-username" 
+                    placeholder="Tên người dùng"
+                    maxlength="20"
+                >
+                <input 
+                    type="password" 
+                    id="auth-password" 
+                    placeholder="Mật khẩu"
+                    maxlength="40"
+                >
+                <button id="auth-submit" onclick="handleAuthSubmit()">Tiếp tục</button>
+                <p class="auth-hint">Mật khẩu tối thiểu 6 ký tự</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Room Selection Modal -->
+    <div class="room-selection-container hidden" id="room-modal">
+        <div class="room-modal">
+            <h2>Chọn phòng chat</h2>
+            <div class="room-list" id="room-list"></div>
+            <div class="create-room">
+                <input 
+                    type="text" 
+                    id="new-room-name" 
+                    placeholder="Tên phòng mới (vd: music)"
+                    maxlength="30"
+                >
+                <button onclick="createRoom()">Tạo phòng</button>
+            </div>
         </div>
     </div>
 
@@ -30,8 +60,9 @@
             </h1>
             <div class="user-info">
                 <span id="username-display"></span>
+                <span class="current-room" id="room-display"></span>
                 <span class="user-count">
-                    (<span id="user-count">0</span> người online)
+                    (<span id="user-count">0</span> người trong phòng)
                 </span>
             </div>
         </div>
@@ -58,12 +89,22 @@
         // ===== BIẾN LƯU THÔNG TIN =====
         let socket = null;          // Kết nối WebSocket
         let username = '';          // Tên người dùng
-        let userCount = 0;          // Số người đang online
+        let authToken = '';         // Token đăng nhập
+        let currentRoom = '';       // Phòng hiện tại
+        let userCount = 0;          // Số người đang online trong phòng
         let clientId = '';          // ID của mình
+        let authMode = 'login';     // login | register
+        let rooms = [];             // Danh sách phòng
+        let isAuthLoading = false;  // Trạng thái submit form auth
 
         // ===== LẤY CÁC PHẦN TỬ TRÊN TRANG =====
-        const usernameModal = document.getElementById('username-modal');
-        const usernameInput = document.getElementById('username-input');
+        const authModal = document.getElementById('auth-modal');
+        const roomModal = document.getElementById('room-modal');
+        const authUsernameInput = document.getElementById('auth-username');
+        const authPasswordInput = document.getElementById('auth-password');
+        const authSubmitButton = document.getElementById('auth-submit');
+        const loginTab = document.getElementById('login-tab');
+        const registerTab = document.getElementById('register-tab');
         const chatContainer = document.getElementById('chat-container');
         const usernameDisplay = document.getElementById('username-display');
         const connectionIndicator = document.getElementById('connection-indicator');
@@ -72,6 +113,152 @@
         const messageInput = document.getElementById('message-input');
         const sendButton = document.getElementById('send-button');
         const particlesContainer = document.getElementById('particles-container');
+        const roomListElement = document.getElementById('room-list');
+        const newRoomInput = document.getElementById('new-room-name');
+        const roomDisplay = document.getElementById('room-display');
+
+        function switchAuthMode(mode) {
+            authMode = mode;
+            loginTab.classList.toggle('active', mode === 'login');
+            registerTab.classList.toggle('active', mode === 'register');
+            authSubmitButton.textContent = mode === 'login' ? 'Đăng nhập' : 'Đăng ký';
+        }
+
+        function setAuthLoading(state) {
+            isAuthLoading = state;
+            authSubmitButton.disabled = state;
+            authSubmitButton.textContent = state 
+                ? 'Đang xử lý...' 
+                : (authMode === 'login' ? 'Đăng nhập' : 'Đăng ký');
+        }
+
+        async function handleAuthSubmit() {
+            if (isAuthLoading) {
+                return;
+            }
+
+            const enteredUsername = authUsernameInput.value.trim();
+            const enteredPassword = authPasswordInput.value.trim();
+
+            if (!enteredUsername || !enteredPassword) {
+                alert('Vui lòng nhập đầy đủ thông tin');
+                return;
+            }
+
+            setAuthLoading(true);
+            try {
+                const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        username: enteredUsername,
+                        password: enteredPassword
+                    })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Có lỗi xảy ra');
+                }
+
+                authToken = data.token;
+                username = data.username;
+                usernameDisplay.textContent = username;
+                authUsernameInput.value = '';
+                authPasswordInput.value = '';
+                authModal.classList.add('hidden');
+                roomModal.classList.remove('hidden');
+                loadRooms();
+            } catch (error) {
+                alert(error.message || 'Không thể xử lý yêu cầu');
+            } finally {
+                setAuthLoading(false);
+            }
+        }
+
+        async function loadRooms() {
+            try {
+                const response = await fetch('/api/rooms');
+                const data = await response.json();
+                rooms = data.rooms || [];
+                renderRooms();
+            } catch (error) {
+                roomListElement.innerHTML = `
+                    <div class="room-empty">
+                        Không thể tải danh sách phòng. Vui lòng thử lại.
+                    </div>
+                `;
+            }
+        }
+
+        function renderRooms() {
+            if (!rooms.length) {
+                roomListElement.innerHTML = `
+                    <div class="room-empty">
+                        Chưa có phòng nào. Hãy tạo phòng đầu tiên!
+                    </div>
+                `;
+                return;
+            }
+
+            roomListElement.innerHTML = '';
+            rooms.forEach((room) => {
+                const item = document.createElement('div');
+                item.className = 'room-item';
+                item.innerHTML = `
+                    <div>
+                        <div class="room-name-label">#${room.name}</div>
+                        <div class="room-meta">${room.members || 0} người</div>
+                    </div>
+                    <button class="join-room-btn">Tham gia</button>
+                `;
+
+                const joinBtn = item.querySelector('.join-room-btn');
+                joinBtn.addEventListener('click', () => selectRoom(room.name));
+                roomListElement.appendChild(item);
+            });
+        }
+
+        async function createRoom() {
+            const roomName = newRoomInput.value.trim();
+            if (!roomName) {
+                alert('Vui lòng nhập tên phòng');
+                return;
+            }
+            if (!authToken) {
+                alert('Vui lòng đăng nhập trước');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/rooms', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${authToken}`
+                    },
+                    body: JSON.stringify({ name: roomName })
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Không thể tạo phòng');
+                }
+                newRoomInput.value = '';
+                loadRooms();
+            } catch (error) {
+                alert(error.message || 'Không thể tạo phòng');
+            }
+        }
+
+        function selectRoom(roomName) {
+            currentRoom = roomName;
+            roomDisplay.textContent = `#${currentRoom}`;
+            userCount = 0;
+            userCountElement.textContent = '0';
+            roomModal.classList.add('hidden');
+            joinChat();
+        }
 
         // ===== HÀM HIỂN THỊ TIN NHẮN HỆ THỐNG =====
         function addSystemMessage(text) {
@@ -89,6 +276,9 @@
 
         // ===== HÀM HIỂN THỊ TIN NHẮN CHAT =====
         function showMessage(data) {
+            if (data.room && currentRoom && data.room !== currentRoom) {
+                return;
+            }
             // Tạo div cho tin nhắn
             const div = document.createElement('div');
             
@@ -120,40 +310,34 @@
 
         // ===== VÀO CHAT =====
         function joinChat() {
-            // Lấy tên người dùng
-            const name = usernameInput.value.trim();
-            
-            // Kiểm tra đã nhập tên chưa
-            if (!name) {
-                alert('Vui lòng nhập tên của bạn!');
+            if (!authToken) {
+                alert('Vui lòng đăng nhập trước');
+                return;
+            }
+            if (!currentRoom) {
+                alert('Vui lòng chọn phòng trước');
                 return;
             }
 
-            // Lưu tên và hiển thị
-            username = name;
-            usernameDisplay.textContent = name;
+            if (socket) {
+                socket.close();
+            }
 
-            // Tạo đường dẫn WebSocket
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${window.location.host}/ws`;
-            
-            // Tạo kết nối WebSocket
+            const wsUrl = `${protocol}//${window.location.host}/ws?token=${authToken}&room=${encodeURIComponent(currentRoom)}`;
             socket = new WebSocket(wsUrl);
 
-            // Ẩn form nhập tên, hiện giao diện chat
-            usernameModal.classList.add('hidden');
             chatContainer.classList.remove('hidden');
+            roomDisplay.textContent = `#${currentRoom}`;
 
             // Xử lý khi kết nối thành công
             socket.onopen = () => {
                 connectionIndicator.classList.remove('disconnected');
-                addSystemMessage('Đã kết nối với server');
+                addSystemMessage(`Đã kết nối tới phòng #${currentRoom}`);
                 
-                // Gửi tin nhắn join nếu đã có clientId
-                if (clientId && socket.readyState === WebSocket.OPEN) {
+                if (socket.readyState === WebSocket.OPEN) {
                     socket.send(JSON.stringify({
-                        type: 'join',
-                        username: username
+                        type: 'join'
                     }));
                 }
             };
@@ -162,6 +346,9 @@
             socket.onclose = () => {
                 connectionIndicator.classList.add('disconnected');
                 addSystemMessage('Mất kết nối với server');
+                chatContainer.classList.add('hidden');
+                roomModal.classList.remove('hidden');
+                loadRooms();
             };
 
             // Xử lý khi có lỗi
@@ -177,29 +364,32 @@
                     
                     // Xử lý theo loại tin nhắn
                     if (data.type === 'connect') {
-                        // Server gửi ID cho mình
                         clientId = data.id;
-                        // Gửi tin nhắn join
-                        socket.send(JSON.stringify({
-                            type: 'join',
-                            username: username
-                        }));
+                        if (data.room) {
+                            currentRoom = data.room;
+                            roomDisplay.textContent = `#${currentRoom}`;
+                        }
+                        if (typeof data.count === 'number') {
+                            userCount = data.count;
+                            userCountElement.textContent = userCount;
+                        }
+                    }
+                    else if (data.type === 'room-count') {
+                        userCount = data.count || 0;
+                        userCountElement.textContent = userCount;
                     }
                     else if (data.type === 'message') {
-                        // Hiển thị tin nhắn chat
                         showMessage(data);
                     }
                     else if (data.type === 'user-joined') {
-                        // Có người tham gia
-                        userCount++;
+                        userCount = data.count || userCount;
                         userCountElement.textContent = userCount;
-                        addSystemMessage(`${data.username || 'Ai đó'} đã tham gia chat`);
+                        addSystemMessage(`${data.username || 'Ai đó'} đã tham gia phòng`);
                     }
                     else if (data.type === 'user-left') {
-                        // Có người rời đi
-                        userCount = Math.max(0, userCount - 1);
+                        userCount = data.count || userCount;
                         userCountElement.textContent = userCount;
-                        addSystemMessage(`${data.username || 'Ai đó'} đã rời chat`);
+                        addSystemMessage(`${data.username || 'Ai đó'} đã rời phòng`);
                     }
                 } catch (error) {
                     console.error('Lỗi khi đọc tin nhắn:', error);
@@ -317,11 +507,13 @@
             messageInput.value = '';
         }
 
-        // ===== BẤM ENTER Ở Ô NHẬP TÊN =====
-        usernameInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
-                joinChat();
-            }
+        // ===== BẤM ENTER Ở FORM AUTH =====
+        [authUsernameInput, authPasswordInput].forEach((input) => {
+            input.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    handleAuthSubmit();
+                }
+            });
         });
 
         // ===== BẤM ENTER Ở Ô NHẬP TIN NHẮN =====
@@ -330,6 +522,8 @@
                 sendMessage();
             }
         });
+
+        switchAuthMode('login');
     </script>
 </body>
 </html>
